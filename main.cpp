@@ -62,11 +62,14 @@ int main(int argc, char* argv[]) {
         perror("Error on listen");
         exit(1);
     }
+    cout << "Server bound to FD: " << server_fd << endl;
     cout << "Server starting on port: " << port << " with password: " << password << endl;
 
     while(1){
         pthread_t threadID;
-        if(int newUserConnection = accept(server_fd, (struct sockaddr*)&client_addr, &client_len) < 0){
+        int newUserConnection;
+        newUserConnection = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+        if( newUserConnection < 0){
             perror("Error on accept");
             exit(1);
         }
