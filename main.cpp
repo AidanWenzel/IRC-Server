@@ -23,7 +23,7 @@ class User: public Object{
 
 class Channel: public Object{
     Channel(string _name){
-        regex channelStr("#[a-zA-Z][0-9a-zA-Z]*");
+
     }
 };
 
@@ -32,6 +32,7 @@ void* userProcess(int client_fd);
 /**************Program wide vars***********/
 string password = "";
 unsigned short port = 12345;
+
 
 /******************************************/
 
@@ -65,7 +66,7 @@ int main(int argc, char* argv[]) {
     cout << "Server bound to FD: " << server_fd << endl;
     cout << "Server starting on port: " << port << " with password: " << password << endl;
 
-    while(1){
+    while(true){
         pthread_t threadID;
         int newUserConnection;
         newUserConnection = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
@@ -74,8 +75,6 @@ int main(int argc, char* argv[]) {
             exit(1);
         }
         else {
-            send(newUserConnection, "Hello from main", 15, 0);
-            cout << "Connected to a user! Sending FD: " << newUserConnection << endl;
             thread newClient(userProcess, newUserConnection);
             newClient.detach();
         }
@@ -85,15 +84,24 @@ int main(int argc, char* argv[]) {
 }
 
 void* userProcess(int client_fd){
-    cout << "Hello from the user thread" << endl;
+    /********Vars for command handling************/
+    regex joinStr("JOIN #[a-zA-Z][0-9a-zA-Z]*");
+    regex userStr("USER [a-zA-Z][0-9a-zA-Z]*");
+    regex listStr("LIST .*");
+    regex partStr("PART #[a-zA-Z][0-9a-zA-Z]*");
+    regex opStr("OPERATOR .*");
+    regex kickStr("KICK #[a-zA-Z][0-9a-zA-Z]* [a-zA-Z][0-9a-zA-Z]*");
+    regex msgStr("PRIVMSG #?[a-zA-Z][0-9a-zA-Z]* .*");
+    regex quitStr("QUIT");
+    /*********************************************/
 
-    if(write(client_fd, "Hello there", 11)<0){
+    if(write(client_fd, "Welcome to the server. Type HELP for commands\n", 46)<0){
         perror("failed to write to child");
     }
 
-    cout << "Write complete" << endl;
+    bool userDeclared = false;
 
-    while(1){
+    while(true){
         char buffer[512] = {0};
 
         ssize_t r_val = read(client_fd, buffer, 512);
@@ -108,6 +116,20 @@ void* userProcess(int client_fd){
             exit(1);
         }
 
-        cout << "Hello there" << endl;
+        if(regex_match(buffer, userStr)){
+            if(!userDeclared){
+
+            }
+        }
+
+        if(regex_match(buffer, joinStr)){
+
+        }
+
+
+
+
+
+        cout << buffer << endl;
     }
 }
