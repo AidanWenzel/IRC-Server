@@ -8,33 +8,40 @@
 #include <thread>
 #include <mutex>
 #include <map>
+#include <set>
 
 using namespace std;
 
 class Object{
-private:
+public:
     string name;
-    vector<Object> members;
+    set<string> members;
 };
 
 class User: public Object{
 public:
-    User(string _name){
-
+    int connection;
+    User(string const &_name, int FD){
+        name = _name;
+        connection = FD;
     }
 };
 
 class Channel: public Object{
 public:
-    Channel(string _name){
-
+    Channel(string const &_name, string const &user){
+        name = _name;
+        members.insert(user);
     }
 };
 
 void userProcess(int client_fd);
+void removeUserFromChannel(string const &user, string const &channel);
+void removeFromAllChannels(string const &user);
+void deleteUser(string const &user);
 
 /**************Program wide vars***********/
-string password = "";
+string password;
 unsigned short port = 12345;
 mutex channelUsersInUse;
 map<string, User> users;
@@ -80,6 +87,7 @@ int main(int argc, char* argv[]) {
             exit(1);
         }
         else {
+            cout << "Connecting to new client on FD: " << newUserConnection << endl;
             thread newClient(userProcess, newUserConnection);
             newClient.detach();
         }
@@ -98,7 +106,7 @@ void userProcess(int client_fd){
     regex kickStr("KICK #[a-zA-Z][0-9a-zA-Z]* [a-zA-Z][0-9a-zA-Z]*");
     regex msgStr("PRIVMSG #?[a-zA-Z][0-9a-zA-Z]* .*");
     regex quitStr("QUIT");
-    regex helpStr("HELP .*");
+    regex helpStr("HELP");
     /*********************************************/
 
     if(write(client_fd, "> Welcome to the server. Type HELP for commands\n", 48)<0){
@@ -107,7 +115,7 @@ void userProcess(int client_fd){
 
     bool userDeclared = false;
     string userName;
-    string msg = "";
+    string msg;
 
     while(true){
         char buffer[512] = {0};
@@ -117,6 +125,7 @@ void userProcess(int client_fd){
 
         if(r_val == 0){
             cout << "Connection closed by user" << endl;
+            deleteUser(userName);
             return;
         }
 
@@ -133,7 +142,7 @@ void userProcess(int client_fd){
             if(!userDeclared){
                 input >> userName;
                 if(userName.length() > 20){
-                    msg = "Usernames can be no longer than 20 characters\n";
+                    msg = "> Usernames can be no longer than 20 characters\n";
                     write(client_fd, msg.c_str(), msg.length());
                     channelUsersInUse.unlock();
                     continue;
@@ -142,10 +151,10 @@ void userProcess(int client_fd){
                 channelUsersInUse.lock();
                 //check if user already exists, if not then allow creation
                 if(users.find(userName) == users.end()){
-                    users.insert(pair<string,User>(userName, User(userName)));
+                    users.insert(pair<string,User>(userName, User(userName, client_fd)));
                 }
                 else{
-                    msg = "That user already exists. Please choose a different username\n";
+                    msg = "> That user already exists. Please choose a different username\n";
                     write(client_fd, msg.c_str(), msg.length());
                     channelUsersInUse.unlock();
                     continue;
@@ -160,7 +169,12 @@ void userProcess(int client_fd){
         }
 
         else if(regex_match(buffer, helpStr)){
-            //TODO: write help response
+            msg = "> Command options:\n    USER <nickname>\n    LIST [#channel]\n"
+                    "    JOIN <#channel>\n    PART [#channel]\n    OPERATOR <password>\n"
+                    "    KICK <#channel> <user>\n    PRIVMSG <#channel>|<user> <msg>\n"
+                    "    QUIT\n";
+            write(client_fd, msg.c_str(), msg.length());
+            continue;
         }
 
         if(!userDeclared){
@@ -169,12 +183,26 @@ void userProcess(int client_fd){
             continue;
         }
 
+        //ALL OTHER COMMANDS
         if(regex_match(buffer, joinStr)){
 
         }
+        if(regex_match(buffer, listStr)){
 
+        }
+        if(regex_match(buffer, partStr)){
 
+        }
+        if(regex_match(buffer, opStr)){
 
+        }
+        if(regex_match(buffer, kickStr)){
+
+        }
+        if(regex_match(buffer, msgStr)){
+            string target;
+            input >> target;
+        }
 
         cout << "USERS:" << endl;
         for(map<string,User>::iterator itr = users.begin(); itr != users.end(); itr++){
@@ -183,7 +211,25 @@ void userProcess(int client_fd){
     }
 }
 
-void removeUserFromChannel(string user, string channel){
-
+void removeUserFromChannel(string const &user, string const &channel){
+    channelUsersInUse.lock();
+    users.find(user)->second.members.erase(channel);
+    channels.find(channel)->second.members.erase(user);
+    channelUsersInUse.unlock();
 }
 
+void removeFromAllChannels(string const &user){
+    channelUsersInUse.lock();
+    set<string> channelList = users.find(user)->second.members;
+    channelUsersInUse.unlock();
+    for(set<string>::iterator itr = channelList.begin(); itr != channelList.end(); itr++){
+        removeUserFromChannel(user, *itr);
+    }
+}
+
+void deleteUser(string const &user){
+    removeFromAllChannels(user);
+    channelUsersInUse.lock();
+    users.erase(user);
+    channelUsersInUse.unlock();
+}
