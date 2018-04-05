@@ -132,6 +132,13 @@ void userProcess(int client_fd){
         if(regex_match(buffer, userStr)){
             if(!userDeclared){
                 input >> userName;
+                if(userName.length() > 20){
+                    msg = "Usernames can be no longer than 20 characters\n";
+                    write(client_fd, msg.c_str(), msg.length());
+                    channelUsersInUse.unlock();
+                    continue;
+                }
+
                 channelUsersInUse.lock();
                 //check if user already exists, if not then allow creation
                 if(users.find(userName) == users.end()){
