@@ -6,6 +6,8 @@
 #include <errno.h>
 #include <unistd.h>
 #include <thread>
+#include <mutex>
+#include <map>
 
 using namespace std;
 
@@ -16,24 +18,27 @@ private:
 };
 
 class User: public Object{
+public:
     User(string _name){
 
     }
 };
 
 class Channel: public Object{
+public:
     Channel(string _name){
 
     }
 };
 
-void* userProcess(int client_fd);
+void userProcess(int client_fd);
 
 /**************Program wide vars***********/
 string password = "";
 unsigned short port = 12345;
-
-
+mutex channelUsersInUse;
+map<string, User> users;
+map<string, Channel> channels;
 /******************************************/
 
 int main(int argc, char* argv[]) {
@@ -83,7 +88,7 @@ int main(int argc, char* argv[]) {
     return EXIT_SUCCESS;
 }
 
-void* userProcess(int client_fd){
+void userProcess(int client_fd){
     /********Vars for command handling************/
     regex joinStr("JOIN #[a-zA-Z][0-9a-zA-Z]*");
     regex userStr("USER [a-zA-Z][0-9a-zA-Z]*");
@@ -93,33 +98,68 @@ void* userProcess(int client_fd){
     regex kickStr("KICK #[a-zA-Z][0-9a-zA-Z]* [a-zA-Z][0-9a-zA-Z]*");
     regex msgStr("PRIVMSG #?[a-zA-Z][0-9a-zA-Z]* .*");
     regex quitStr("QUIT");
+    regex helpStr("HELP .*");
     /*********************************************/
 
-    if(write(client_fd, "Welcome to the server. Type HELP for commands\n", 46)<0){
+    if(write(client_fd, "> Welcome to the server. Type HELP for commands\n", 48)<0){
         perror("failed to write to child");
     }
 
     bool userDeclared = false;
+    string userName;
+    string msg = "";
 
     while(true){
         char buffer[512] = {0};
 
         ssize_t r_val = read(client_fd, buffer, 512);
+        buffer[r_val-1] = '\000';
 
         if(r_val == 0){
             cout << "Connection closed by user" << endl;
-            exit(1);
+            return;
         }
 
         if(r_val < 0){
             cout << "Error reading from user" << endl;
-            exit(1);
+            return;
         }
+
+        stringstream input(buffer);
+        string item;
+        input >> item;
 
         if(regex_match(buffer, userStr)){
             if(!userDeclared){
-
+                input >> userName;
+                channelUsersInUse.lock();
+                //check if user already exists, if not then allow creation
+                if(users.find(userName) == users.end()){
+                    users.insert(pair<string,User>(userName, User(userName)));
+                }
+                else{
+                    msg = "That user already exists. Please choose a different username\n";
+                    write(client_fd, msg.c_str(), msg.length());
+                    channelUsersInUse.unlock();
+                    continue;
+                }
+                channelUsersInUse.unlock();
+                userDeclared = true;
+            } else {
+                msg = "> You have already declared a username!\n";
+                write(client_fd, msg.c_str(), msg.length());
+                continue;
             }
+        }
+
+        else if(regex_match(buffer, helpStr)){
+            //TODO: write help response
+        }
+
+        if(!userDeclared){
+            msg = "> Invalid command. You must enter a username first\n";
+            write(client_fd, msg.c_str(), msg.length());
+            continue;
         }
 
         if(regex_match(buffer, joinStr)){
@@ -129,7 +169,14 @@ void* userProcess(int client_fd){
 
 
 
-
-        cout << buffer << endl;
+        cout << "USERS:" << endl;
+        for(map<string,User>::iterator itr = users.begin(); itr != users.end(); itr++){
+            cout << itr->first << endl;
+        }
     }
 }
+
+void removeUserFromChannel(string user, string channel){
+
+}
+
