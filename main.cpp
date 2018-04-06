@@ -16,22 +16,33 @@ class Object{
 public:
     string name;
     set<string> members;
+
+    explicit Object(string const & _name){
+        name = _name;
+    }
 };
 
 class User: public Object{
 public:
     int connection;
-    User(string const &_name, int FD){
-        name = _name;
+    User(string const & _name, int FD) : Object(_name){
         connection = FD;
+    }
+
+    void message(string const &msg){
+        write(connection, msg.c_str(), msg.length());
     }
 };
 
 class Channel: public Object{
 public:
-    Channel(string const &_name, string const &user){
-        name = _name;
+    Channel(string const &_name, string const &user) : Object(_name){
         members.insert(user);
+    }
+    void broadcast(string const &msg, map<string, User> users){
+        for (const auto &member : members) {
+            users.find(member)->second.message(msg);
+        }
     }
 };
 
@@ -44,8 +55,8 @@ void deleteUser(string const &user);
 string password;
 unsigned short port = 12345;
 mutex channelUsersInUse;
-map<string, User> users;
-map<string, Channel> channels;
+map<string, User> userMap;
+map<string, Channel> channelMap;
 /******************************************/
 
 int main(int argc, char* argv[]) {
@@ -150,8 +161,8 @@ void userProcess(int client_fd){
 
                 channelUsersInUse.lock();
                 //check if user already exists, if not then allow creation
-                if(users.find(userName) == users.end()){
-                    users.insert(pair<string,User>(userName, User(userName, client_fd)));
+                if(userMap.find(userName) == userMap.end()){
+                    userMap.insert(pair<string,User>(userName, User(userName, client_fd)));
                 }
                 else{
                     msg = "> That user already exists. Please choose a different username\n";
@@ -202,34 +213,64 @@ void userProcess(int client_fd){
         if(regex_match(buffer, msgStr)){
             string target;
             input >> target;
+
+            if(target[0] == '#'){
+                auto channel = channelMap.find(target);
+                if(channel != channelMap.end()){
+                    msg = target;
+                    msg.append("> ");
+                    msg.append(userName + ": ");
+                    msg.append(buffer + 9 + target.length());
+                    msg.append("\n");
+                    channel->second.broadcast(msg, userMap);
+                }
+                else{
+                    msg = "The target of the message does not exist\n";
+                    write(client_fd, msg.c_str(), msg.length());
+                }
+            }
+            else{
+                auto user = userMap.find(target);
+                if(user != userMap.end()){
+                    msg = userName;
+                    msg.append("> ");
+                    msg.append(buffer + 9 + target.length());
+                    msg.append("\n");
+                    user->second.message(msg);
+                }
+                else{
+                    msg = "The target of the message does not exist\n";
+                    write(client_fd, msg.c_str(), msg.length());
+                }
+            }
         }
 
         cout << "USERS:" << endl;
-        for(map<string,User>::iterator itr = users.begin(); itr != users.end(); itr++){
-            cout << itr->first << endl;
+        for (auto &user : userMap) {
+            cout << user.first << endl;
         }
     }
 }
 
 void removeUserFromChannel(string const &user, string const &channel){
     channelUsersInUse.lock();
-    users.find(user)->second.members.erase(channel);
-    channels.find(channel)->second.members.erase(user);
+    userMap.find(user)->second.members.erase(channel);
+    channelMap.find(channel)->second.members.erase(user);
     channelUsersInUse.unlock();
 }
 
 void removeFromAllChannels(string const &user){
     channelUsersInUse.lock();
-    set<string> channelList = users.find(user)->second.members;
+    set<string> channelList = userMap.find(user)->second.members;
     channelUsersInUse.unlock();
-    for(set<string>::iterator itr = channelList.begin(); itr != channelList.end(); itr++){
-        removeUserFromChannel(user, *itr);
+    for (const auto &itr : channelList) {
+        removeUserFromChannel(user, itr);
     }
 }
 
 void deleteUser(string const &user){
     removeFromAllChannels(user);
     channelUsersInUse.lock();
-    users.erase(user);
+    userMap.erase(user);
     channelUsersInUse.unlock();
 }
