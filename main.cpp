@@ -111,13 +111,14 @@ void userProcess(int client_fd){
     /********Vars for command handling************/
     regex joinStr("JOIN #[a-zA-Z][0-9a-zA-Z]*");
     regex userStr("USER [a-zA-Z][0-9a-zA-Z]*");
-    regex listStr("LIST .*");
+    regex listStr("LIST.*");
     regex partStr("PART #[a-zA-Z][0-9a-zA-Z]*");
     regex opStr("OPERATOR .*");
     regex kickStr("KICK #[a-zA-Z][0-9a-zA-Z]* [a-zA-Z][0-9a-zA-Z]*");
     regex msgStr("PRIVMSG #?[a-zA-Z][0-9a-zA-Z]* .*");
     regex quitStr("QUIT");
     regex helpStr("HELP");
+    regex channelStr("#[a-zA-Z][0-9a-zA-Z]*");
     /*********************************************/
 
     if(write(client_fd, "> Welcome to the server. Type HELP for commands\n", 48)<0){
@@ -127,6 +128,7 @@ void userProcess(int client_fd){
     bool userDeclared = false;
     string userName;
     string msg;
+    bool isAdmin = false;
 
     while(true){
         char buffer[512] = {0};
@@ -177,6 +179,7 @@ void userProcess(int client_fd){
                 write(client_fd, msg.c_str(), msg.length());
                 continue;
             }
+            continue;
         }
 
         else if(regex_match(buffer, helpStr)){
@@ -196,24 +199,92 @@ void userProcess(int client_fd){
 
         //ALL OTHER COMMANDS
         if(regex_match(buffer, joinStr)){
-
-        }
-        if(regex_match(buffer, listStr)){
-
-        }
-        if(regex_match(buffer, partStr)){
-
-        }
-        if(regex_match(buffer, opStr)){
-
-        }
-        if(regex_match(buffer, kickStr)){
-
-        }
-        if(regex_match(buffer, msgStr)){
             string target;
             input >> target;
 
+            if(target.length() > 20){
+                msg = "That channel name is too long. Please limit channel names to 20 characters\n";
+                write(client_fd, msg.c_str(), msg.length());
+                continue;
+            }
+
+            channelUsersInUse.lock();
+            auto targetChannel = channelMap.find(target);
+            if(targetChannel == channelMap.end()){
+                //if the channel doesn't exist, create it
+                channelMap.insert(pair<string,Channel>(target, Channel(target, userName)));
+                userMap.find(userName)->second.members.insert(target);
+            } else {
+                //join the channel
+                targetChannel->second.members.insert(userName);
+                userMap.find(userName)->second.members.insert(target);
+            }
+            channelUsersInUse.unlock();
+
+            msg = "You have joined channel " + target + "\n";
+            write(client_fd, msg.c_str(), msg.length());
+        }
+        else if(regex_match(buffer, listStr)){
+            string target;
+            input >> target;
+
+            int count = 0;
+            string list;
+
+            channelUsersInUse.lock();
+            if(target.length() <= 20 && regex_match(target, channelStr) && channelMap.find(target)!=channelMap.end()){
+                for (const auto &member : channelMap.find(target)->second.members) {
+                    list.append(" " + member);
+                    count++;
+                }
+                msg = "There are currently " + to_string(count) + " members.\n    " + target + " members:" + list + "\n"; // NOLINT
+            }
+            else{
+                for(const auto &channelItr : channelMap){
+                    list.append("    " + channelItr.first + "\n");
+                    count++;
+                }
+                msg = "There are currently " + to_string(count) + " channels.\n" + list;
+            }
+            channelUsersInUse.unlock();
+
+            write(client_fd, msg.c_str(), msg.length());
+        }
+        else if(regex_match(buffer, partStr)){
+            string target;
+            input >> target;
+            if(channelMap.find(target)!=channelMap.end()){
+                removeUserFromChannel(userName, target);
+            }
+            else{
+                msg = "> You are not currently a member of " + target + "\n";
+                write(client_fd, msg.c_str(), msg.length());
+            }
+        }
+        else if(regex_match(buffer, opStr)){
+            string target;
+            input >> target;
+            if(target == password){
+                isAdmin = true;
+                msg = "> OPERATOR status bestowed.\n";
+            }
+            else {
+                msg = "> Invalid OPERATOR command.\n";
+            }
+            write(client_fd, msg.c_str(), msg.length());
+        }
+        else if(regex_match(buffer, kickStr)){
+            string targetChannel, targetUser;
+            input >> targetChannel;
+            input >> targetUser;
+
+            //TODO: Finish this
+        }
+        else if(regex_match(buffer, msgStr)){
+            string target;
+            input >> target;
+
+            channelUsersInUse.lock();
             if(target[0] == '#'){
                 auto channel = channelMap.find(target);
                 if(channel != channelMap.end()){
@@ -243,6 +314,11 @@ void userProcess(int client_fd){
                     write(client_fd, msg.c_str(), msg.length());
                 }
             }
+            channelUsersInUse.unlock();
+        }
+        else{
+            msg = "That command was not recognized. Type HELP for a command list\n";
+            write(client_fd, msg.c_str(), msg.length());
         }
 
         cout << "USERS:" << endl;
@@ -255,7 +331,10 @@ void userProcess(int client_fd){
 void removeUserFromChannel(string const &user, string const &channel){
     channelUsersInUse.lock();
     userMap.find(user)->second.members.erase(channel);
-    channelMap.find(channel)->second.members.erase(user);
+    auto targetChannel = channelMap.find(channel);
+    string msg = channel + "> " + user + " has left the channel\n";
+    targetChannel->second.broadcast(msg, userMap);
+    targetChannel->second.members.erase(user);
     channelUsersInUse.unlock();
 }
 
