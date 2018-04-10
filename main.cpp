@@ -47,7 +47,7 @@ public:
 };
 
 void userProcess(int client_fd);
-void removeUserFromChannel(string const &user, string const &channel);
+void removeUserFromChannel(string const &user, string const &channel, bool isKick);
 void removeFromAllChannels(string const &user);
 void deleteUser(string const &user);
 
@@ -61,10 +61,14 @@ map<string, Channel> channelMap;
 
 int main(int argc, char* argv[]) {
     if(argc == 2){
-        regex pass("--opt-pass=.*");
+        regex pass("--opt-pass=[a-zA-Z][_0-9a-zA-Z]*");
         string input = argv[1];
-        if(regex_match(input, pass))
+        if(regex_match(input, pass) && input.length() <= 20)
             password = input.substr(11);
+        else{
+            perror("STARTUP FAILED - Invalid password\n");
+            exit(-1);
+        }
     }
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -113,6 +117,7 @@ void userProcess(int client_fd){
     regex userStr("USER [a-zA-Z][0-9a-zA-Z]*");
     regex listStr("LIST.*");
     regex partStr("PART #[a-zA-Z][0-9a-zA-Z]*");
+    regex partAllStr("PART");
     regex opStr("OPERATOR .*");
     regex kickStr("KICK #[a-zA-Z][0-9a-zA-Z]* [a-zA-Z][0-9a-zA-Z]*");
     regex msgStr("PRIVMSG #?[a-zA-Z][0-9a-zA-Z]* .*");
@@ -165,6 +170,8 @@ void userProcess(int client_fd){
                 //check if user already exists, if not then allow creation
                 if(userMap.find(userName) == userMap.end()){
                     userMap.insert(pair<string,User>(userName, User(userName, client_fd)));
+                    msg = "> Welcome, " + userName + "\n";
+                    write(client_fd, msg.c_str(), msg.length());
                 }
                 else{
                     msg = "> That user already exists. Please choose a different username\n";
@@ -203,7 +210,7 @@ void userProcess(int client_fd){
             input >> target;
 
             if(target.length() > 20){
-                msg = "That channel name is too long. Please limit channel names to 20 characters\n";
+                msg = "> That channel name is too long. Please limit channel names to 20 characters\n";
                 write(client_fd, msg.c_str(), msg.length());
                 continue;
             }
@@ -221,7 +228,7 @@ void userProcess(int client_fd){
             }
             channelUsersInUse.unlock();
 
-            msg = "You have joined channel " + target + "\n";
+            msg = "> You have joined channel " + target + "\n";
             write(client_fd, msg.c_str(), msg.length());
         }
         else if(regex_match(buffer, listStr)){
@@ -237,24 +244,28 @@ void userProcess(int client_fd){
                     list.append(" " + member);
                     count++;
                 }
-                msg = "There are currently " + to_string(count) + " members.\n    " + target + " members:" + list + "\n"; // NOLINT
+                msg = "> There are currently " + to_string(count) + " members.\n";
+                if(count > 0){msg.append("    " + target + " members:" + list + "\n");}
             }
             else{
                 for(const auto &channelItr : channelMap){
                     list.append("    " + channelItr.first + "\n");
                     count++;
                 }
-                msg = "There are currently " + to_string(count) + " channels.\n" + list;
+                msg = "> There are currently " + to_string(count) + " channels.\n" + list;
             }
             channelUsersInUse.unlock();
 
             write(client_fd, msg.c_str(), msg.length());
         }
-        else if(regex_match(buffer, partStr)){
+        else if(regex_match(buffer, partStr) || regex_match(buffer, partAllStr)){
             string target;
             input >> target;
             if(channelMap.find(target)!=channelMap.end()){
-                removeUserFromChannel(userName, target);
+                removeUserFromChannel(userName, target, false);
+            }
+            else if(regex_match(buffer, partAllStr)){
+                removeFromAllChannels(userName);
             }
             else{
                 msg = "> You are not currently a member of " + target + "\n";
@@ -278,7 +289,21 @@ void userProcess(int client_fd){
             input >> targetChannel;
             input >> targetUser;
 
-            //TODO: Finish this
+            if(isAdmin){
+                channelUsersInUse.lock();
+                if(channelMap.find(targetChannel) == channelMap.end() || userMap.find(targetUser) == userMap.end()){
+                    channelUsersInUse.unlock();
+                    msg = "> That user is not in that channel";
+                    write(client_fd, msg.c_str(), msg.length());
+                    continue;
+                }
+                channelUsersInUse.unlock();
+                removeUserFromChannel(targetUser, targetChannel, true);
+            }
+            else{
+                msg = "> You do not have authorization for this command\n";
+                write(client_fd, msg.c_str(), msg.length());
+            }
         }
         else if(regex_match(buffer, msgStr)){
             string target;
@@ -287,7 +312,8 @@ void userProcess(int client_fd){
             channelUsersInUse.lock();
             if(target[0] == '#'){
                 auto channel = channelMap.find(target);
-                if(channel != channelMap.end()){
+                if(channel != channelMap.end() && userMap.find(userName)->second.members.find(target) !=
+                                                          userMap.find(userName)->second.members.end()){
                     msg = target;
                     msg.append("> ");
                     msg.append(userName + ": ");
@@ -296,7 +322,7 @@ void userProcess(int client_fd){
                     channel->second.broadcast(msg, userMap);
                 }
                 else{
-                    msg = "The target of the message does not exist\n";
+                    msg = "> You cannot message that target\n";
                     write(client_fd, msg.c_str(), msg.length());
                 }
             }
@@ -310,14 +336,20 @@ void userProcess(int client_fd){
                     user->second.message(msg);
                 }
                 else{
-                    msg = "The target of the message does not exist\n";
+                    msg = "> The target of the message does not exist\n";
                     write(client_fd, msg.c_str(), msg.length());
                 }
             }
             channelUsersInUse.unlock();
         }
+        else if(regex_match(buffer, quitStr)){
+            write(client_fd, 0, 0);
+            close(client_fd);
+            deleteUser(userName);
+            return;
+        }
         else{
-            msg = "That command was not recognized. Type HELP for a command list\n";
+            msg = "> That command was not recognized. Type HELP for a command list\n";
             write(client_fd, msg.c_str(), msg.length());
         }
 
@@ -328,11 +360,15 @@ void userProcess(int client_fd){
     }
 }
 
-void removeUserFromChannel(string const &user, string const &channel){
+void removeUserFromChannel(string const &user, string const &channel, bool isKick){
     channelUsersInUse.lock();
     userMap.find(user)->second.members.erase(channel);
     auto targetChannel = channelMap.find(channel);
-    string msg = channel + "> " + user + " has left the channel\n";
+
+    string msg;
+    if(!isKick){msg = channel + "> " + user + " has left the channel\n";}
+    else{msg = channel + "> " + user + " has been kicked from the channel.";}
+
     targetChannel->second.broadcast(msg, userMap);
     targetChannel->second.members.erase(user);
     channelUsersInUse.unlock();
@@ -343,7 +379,7 @@ void removeFromAllChannels(string const &user){
     set<string> channelList = userMap.find(user)->second.members;
     channelUsersInUse.unlock();
     for (const auto &itr : channelList) {
-        removeUserFromChannel(user, itr);
+        removeUserFromChannel(user, itr, false);
     }
 }
 
