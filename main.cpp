@@ -72,8 +72,8 @@ int main(int argc, char* argv[]) {
     }
 
     int server_fd = socket(AF_INET6, SOCK_STREAM, 0);
-    //int optval = 1;
-    //setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (const void*)&optval, sizeof(int));
+    int optval = 0;
+    setsockopt(server_fd, IPPROTO_IPV6, IPV6_V6ONLY, (const void*)&optval, sizeof(int));
     struct sockaddr_in6 server_addr, client_addr;
     socklen_t client_len;
 
