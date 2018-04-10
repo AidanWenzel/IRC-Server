@@ -71,16 +71,16 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    int optval = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (const void*)&optval, sizeof(int));
-    struct sockaddr_in server_addr, client_addr;
+    int server_fd = socket(AF_INET6, SOCK_STREAM, 0);
+    //int optval = 1;
+    //setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (const void*)&optval, sizeof(int));
+    struct sockaddr_in6 server_addr, client_addr;
     socklen_t client_len;
 
     bzero((char*)&server_addr, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    server_addr.sin_port = htons(port);
+    server_addr.sin6_family = AF_INET6;
+    server_addr.sin6_port = htons(port);
+    server_addr.sin6_addr = in6addr_any;
 
     if(bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr))<0) {
         perror("Failed to attach to port");
